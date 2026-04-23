@@ -58,12 +58,21 @@
         @move="handleMove"
         @drag-start="handleDragStart"
         @drag-end="handleDragEnd"
+        @context-menu="handleContextMenu"
       />
     </div>
     
     <div v-else class="loading-state">
       加载中...
     </div>
+    
+    <ContextMenu
+      :visible="contextMenuVisible"
+      :position="contextMenuPosition"
+      :menu-items="contextMenuItems"
+      @close="closeContextMenu"
+      @action="handleContextMenuAction"
+    />
     
     <input 
       ref="fileInput"
@@ -114,8 +123,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import TreeNode from './TreeNode.vue'
+import ContextMenu from './ContextMenu.vue'
 import { getRootFiles, renameFile, deleteFile, uploadFile, createFolder, moveFile } from '../api/file.js'
 
 const emit = defineEmits(['select', 'preview', 'files-changed'])
@@ -132,6 +142,45 @@ const fileToDelete = ref(null)
 const isDragging = ref(false)
 const isRootDragOver = ref(false)
 const draggedItem = ref(null)
+
+const contextMenuVisible = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuFile = ref(null)
+
+const contextMenuItems = computed(() => {
+  if (!contextMenuFile.value) return []
+  
+  const items = [
+    {
+      icon: '✏️',
+      label: '重命名',
+      action: 'rename',
+      shortcut: 'F2'
+    },
+    {
+      icon: '🗑️',
+      label: '删除',
+      action: 'delete',
+      danger: true,
+      divider: true
+    }
+  ]
+  
+  if (contextMenuFile.value.type === 'folder') {
+    items.unshift({
+      icon: '📤',
+      label: '上传文件到此',
+      action: 'upload'
+    })
+    items.unshift({
+      icon: '📁',
+      label: '新建文件夹',
+      action: 'newFolder'
+    })
+  }
+  
+  return items
+})
 
 async function loadFiles() {
   loading.value = true
@@ -355,6 +404,46 @@ async function checkIsDescendant(ancestorId, descendantId) {
 
 function handleRefresh() {
   loadFiles()
+}
+
+function handleContextMenu(data) {
+  contextMenuFile.value = data.file
+  contextMenuPosition.value = data.position
+  contextMenuVisible.value = true
+}
+
+function closeContextMenu() {
+  contextMenuVisible.value = false
+  contextMenuFile.value = null
+}
+
+function handleContextMenuAction(action) {
+  if (!contextMenuFile.value) return
+  
+  switch (action) {
+    case 'rename':
+      selectedFile.value = contextMenuFile.value
+      handleRename({ id: contextMenuFile.value.id, name: contextMenuFile.value.name })
+      break
+    case 'delete':
+      selectedFile.value = contextMenuFile.value
+      handleDelete(contextMenuFile.value)
+      break
+    case 'upload':
+      if (contextMenuFile.value.type === 'folder') {
+        pendingUploadParentId.value = contextMenuFile.value.id
+        fileInput.value?.click()
+      }
+      break
+    case 'newFolder':
+      if (contextMenuFile.value.type === 'folder') {
+        selectedFile.value = contextMenuFile.value
+        handleCreateFolder()
+      }
+      break
+  }
+  
+  closeContextMenu()
 }
 
 function expandToFile(fileId) {

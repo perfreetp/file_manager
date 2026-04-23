@@ -84,6 +84,10 @@
         @rename="$emit('rename', $event)"
         @delete="$emit('delete', $event)"
         @upload="$emit('upload', { parentId: child.id, event: $event })"
+        @move="$emit('move', $event)"
+        @drag-start="$emit('drag-start', $event)"
+        @drag-end="$emit('drag-end', $event)"
+        @context-menu="$emit('context-menu', $event)"
       />
     </div>
     
@@ -113,7 +117,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['select', 'expand', 'rename', 'delete', 'upload', 'drag-start', 'drag-end', 'move'])
+const emit = defineEmits(['select', 'expand', 'rename', 'delete', 'upload', 'drag-start', 'drag-end', 'move', 'context-menu'])
 
 const expanded = ref(false)
 const loading = ref(false)
@@ -140,6 +144,14 @@ function handleSelect() {
 function handleContextMenu(e) {
   e.preventDefault()
   emit('select', props.node)
+  emit('context-menu', {
+    event: e,
+    file: props.node,
+    position: {
+      x: e.clientX,
+      y: e.clientY
+    }
+  })
 }
 
 async function toggleExpand() {
