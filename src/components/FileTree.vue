@@ -28,7 +28,18 @@
       </div>
     </div>
     
-    <div class="tree-content" v-if="!loading">
+    <div 
+      class="tree-content" 
+      v-if="!loading"
+      :class="{ 'is-dragover': isRootDragOver }"
+      @dragover="handleRootDragOver"
+      @dragleave="handleRootDragLeave"
+      @drop="handleRootDrop"
+    >
+      <div v-if="isDragging && files.length > 0" class="drop-hint">
+        📁 拖动到此处移至根目录
+      </div>
+      
       <div v-if="files.length === 0" class="empty-state">
         暂无文件，点击上传按钮添加文件
       </div>
@@ -44,6 +55,9 @@
         @rename="handleRename"
         @delete="handleDelete"
         @upload="handleUpload"
+        @move="handleMove"
+        @drag-start="handleDragStart"
+        @drag-end="handleDragEnd"
       />
     </div>
     
@@ -102,7 +116,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import TreeNode from './TreeNode.vue'
-import { getRootFiles, renameFile, deleteFile, uploadFile, createFolder } from '../api/file.js'
+import { getRootFiles, renameFile, deleteFile, uploadFile, createFolder, moveFile } from '../api/file.js'
 
 const emit = defineEmits(['select', 'preview', 'files-changed'])
 
@@ -115,6 +129,9 @@ const showCreateFolder = ref(false)
 const newFolderName = ref('')
 const showDeleteConfirm = ref(false)
 const fileToDelete = ref(null)
+const isDragging = ref(false)
+const isRootDragOver = ref(false)
+const draggedItem = ref(null)
 
 async function loadFiles() {
   loading.value = true
@@ -233,6 +250,109 @@ function cancelCreateFolder() {
   newFolderName.value = ''
 }
 
+function handleDragStart(item) {
+  isDragging.value = true
+  draggedItem.value = item
+}
+
+function handleDragEnd() {
+  isDragging.value = false
+  draggedItem.value = null
+  isRootDragOver.value = false
+}
+
+async function handleMove({ sourceId, targetId }) {
+  if (!sourceId || !targetId) return
+  
+  if (sourceId === targetId) return
+  
+  if (draggedItem.value) {
+    let isDescendant = false
+    try {
+      isDescendant = await checkIsDescendant(targetId, sourceId)
+    } catch (e) {
+      console.error('Error checking descendant:', e)
+    }
+    if (isDescendant) {
+      console.log('不能将文件夹移动到其子文件夹中')
+      return
+    }
+  }
+  
+  const result = await moveFile(sourceId, targetId)
+  if (result.success) {
+    emit('files-changed')
+    await loadFiles()
+  }
+}
+
+function handleRootDragOver(e) {
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  isRootDragOver.value = true
+}
+
+function handleRootDragLeave(e) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  const x = e.clientX
+  const y = e.clientY
+  
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+    isRootDragOver.value = false
+  }
+}
+
+async function handleRootDrop(e) {
+  e.preventDefault()
+  isRootDragOver.value = false
+  
+  const internalData = e.dataTransfer.getData('text/plain')
+  
+  if (internalData) {
+    try {
+      const sourceData = JSON.parse(internalData)
+      if (sourceData.id) {
+        if (sourceData.parentId === null) {
+          return
+        }
+        
+        const result = await moveFile(sourceData.id, null)
+        if (result.success) {
+          emit('files-changed')
+          await loadFiles()
+        }
+      }
+      return
+    } catch (err) {
+      // 不是内部文件
+    }
+  }
+  
+  if (e.dataTransfer.files.length > 0) {
+    handleUploadFiles(null, e.dataTransfer.files)
+  }
+}
+
+async function checkIsDescendant(ancestorId, descendantId) {
+  if (ancestorId === descendantId) return true
+  
+  const checkInFiles = (filesList) => {
+    for (const file of filesList) {
+      if (file.id === descendantId) {
+        return file.parentId === ancestorId
+      }
+      if (file.children && file.children.length > 0) {
+        if (checkInFiles(file.children)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+  
+  return checkInFiles(files.value)
+}
+
 function handleRefresh() {
   loadFiles()
 }
@@ -301,6 +421,23 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 8px;
+  position: relative;
+  transition: var(--transition);
+}
+
+.tree-content.is-dragover {
+  background-color: var(--bg-selected);
+}
+
+.drop-hint {
+  padding: 12px;
+  margin-bottom: 8px;
+  background-color: var(--bg-selected);
+  border: 2px dashed var(--primary-color);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  color: var(--primary-color);
+  font-size: 13px;
 }
 
 .empty-state {

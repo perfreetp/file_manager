@@ -217,3 +217,166 @@ export async function getFileDetail(fileId) {
     message: '文件不存在'
   }
 }
+
+function isDescendant(folderId, targetId, filesList) {
+  if (folderId === targetId) return true
+  
+  for (const file of filesList) {
+    if (file.id === folderId) {
+      if (file.children && file.children.length > 0) {
+        return checkIdInChildren(file.children, targetId)
+      }
+      return false
+    }
+    if (file.children && file.children.length > 0) {
+      if (isDescendant(folderId, targetId, file.children)) {
+        return true
+      }
+    }
+  }
+  
+  for (const pid in loadedChildren) {
+    if (isDescendantInLoadedChildren(folderId, targetId, loadedChildren[pid])) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+function checkIdInChildren(children, targetId) {
+  for (const child of children) {
+    if (child.id === targetId) return true
+    if (child.children && child.children.length > 0) {
+      if (checkIdInChildren(child.children, targetId)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function isDescendantInLoadedChildren(folderId, targetId, filesList) {
+  for (const file of filesList) {
+    if (file.id === folderId) {
+      if (file.children && file.children.length > 0) {
+        return checkIdInChildren(file.children, targetId)
+      }
+      return false
+    }
+    if (file.children && file.children.length > 0) {
+      if (isDescendantInLoadedChildren(folderId, targetId, file.children)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function findAndRemoveFile(fileId) {
+  function removeFromArray(arr) {
+    const index = arr.findIndex(f => f.id === fileId)
+    if (index > -1) {
+      return arr.splice(index, 1)[0]
+    }
+    for (const file of arr) {
+      if (file.children && file.children.length > 0) {
+        const removed = removeFromArray(file.children)
+        if (removed) return removed
+      }
+    }
+    return null
+  }
+  
+  let removed = removeFromArray(filesData)
+  if (removed) return removed
+  
+  for (const pid in loadedChildren) {
+    const index = loadedChildren[pid].findIndex(f => f.id === fileId)
+    if (index > -1) {
+      return loadedChildren[pid].splice(index, 1)[0]
+    }
+  }
+  
+  return null
+}
+
+function updateChildrenHasChildren(filesList, parentId) {
+  for (const file of filesList) {
+    if (file.id === parentId) {
+      file.hasChildren = file.children && file.children.length > 0
+      return
+    }
+    if (file.children && file.children.length > 0) {
+      updateChildrenHasChildren(file.children, parentId)
+    }
+  }
+}
+
+export async function moveFile(sourceId, targetId) {
+  await delay(200)
+  
+  if (sourceId === targetId) {
+    return {
+      success: false,
+      message: '不能移动到自身'
+    }
+  }
+  
+  if (targetId !== null) {
+    if (isDescendant(sourceId, targetId, filesData)) {
+      return {
+        success: false,
+        message: '不能将文件夹移动到其子文件夹中'
+      }
+    }
+  }
+  
+  const sourceFile = findAndRemoveFile(sourceId)
+  
+  if (!sourceFile) {
+    return {
+      success: false,
+      message: '源文件不存在'
+    }
+  }
+  
+  const oldParentId = sourceFile.parentId
+  
+  sourceFile.parentId = targetId
+  sourceFile.updatedAt = new Date().toLocaleString('zh-CN')
+  
+  if (targetId === null) {
+    filesData.push(sourceFile)
+  } else {
+    const targetParent = findFileById(filesData, targetId)
+    
+    if (targetParent) {
+      if (!targetParent.children) {
+        targetParent.children = []
+      }
+      targetParent.children.push(sourceFile)
+      targetParent.hasChildren = true
+    } else {
+      if (!loadedChildren[targetId]) {
+        loadedChildren[targetId] = []
+      }
+      loadedChildren[targetId].push(sourceFile)
+    }
+  }
+  
+  if (oldParentId !== null) {
+    const oldParent = findFileById(filesData, oldParentId)
+    if (oldParent) {
+      oldParent.hasChildren = oldParent.children && oldParent.children.length > 0
+    }
+    if (loadedChildren[oldParentId]) {
+      updateChildrenHasChildren(loadedChildren[oldParentId], oldParentId)
+    }
+  }
+  
+  return {
+    success: true,
+    data: cloneFile(sourceFile)
+  }
+}

@@ -5,10 +5,14 @@
       :class="{ 
         'is-selected': selected, 
         'is-dragover': isDragOver,
-        'is-loading': loading
+        'is-loading': loading,
+        'is-dragging': isDragging
       }"
+      draggable="true"
       @click="handleSelect"
       @contextmenu="handleContextMenu"
+      @dragstart="handleDragStart"
+      @dragend="handleDragEnd"
       @dragover="handleDragOver"
       @dragleave="handleDragLeave"
       @drop="handleDrop"
@@ -109,7 +113,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['select', 'expand', 'rename', 'delete', 'upload'])
+const emit = defineEmits(['select', 'expand', 'rename', 'delete', 'upload', 'drag-start', 'drag-end', 'move'])
 
 const expanded = ref(false)
 const loading = ref(false)
@@ -118,6 +122,7 @@ const isRenaming = ref(false)
 const newName = ref('')
 const showActions = ref(false)
 const isDragOver = ref(false)
+const isDragging = ref(false)
 const renameInput = ref(null)
 
 const fileIcon = computed(() => getFileIcon(props.node.type, props.node.fileType))
@@ -186,9 +191,27 @@ function handleUpload() {
   emit('upload', props.node.id)
 }
 
+function handleDragStart(e) {
+  isDragging.value = true
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', JSON.stringify({
+    id: props.node.id,
+    name: props.node.name,
+    type: props.node.type,
+    parentId: props.node.parentId
+  }))
+  emit('drag-start', props.node)
+}
+
+function handleDragEnd() {
+  isDragging.value = false
+  emit('drag-end', props.node)
+}
+
 function handleDragOver(e) {
   if (props.node.type === 'folder') {
     e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
     isDragOver.value = true
   }
 }
@@ -199,8 +222,29 @@ function handleDragLeave() {
 
 function handleDrop(e) {
   e.preventDefault()
+  e.stopPropagation()
   isDragOver.value = false
-  if (props.node.type === 'folder') {
+  
+  const internalData = e.dataTransfer.getData('text/plain')
+  
+  if (internalData) {
+    try {
+      const sourceData = JSON.parse(internalData)
+      if (sourceData.id && sourceData.id !== props.node.id) {
+        if (props.node.type === 'folder') {
+          emit('move', {
+            sourceId: sourceData.id,
+            targetId: props.node.id
+          })
+        }
+      }
+      return
+    } catch (err) {
+      // 不是内部文件，可能是外部文件
+    }
+  }
+  
+  if (props.node.type === 'folder' && e.dataTransfer.files.length > 0) {
     emit('upload', { parentId: props.node.id, files: e.dataTransfer.files })
   }
 }
@@ -240,6 +284,10 @@ function handleDrop(e) {
 
 .tree-node-content.is-loading {
   opacity: 0.7;
+}
+
+.tree-node-content.is-dragging {
+  opacity: 0.4;
 }
 
 .expand-icon {
