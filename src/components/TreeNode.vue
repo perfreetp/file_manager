@@ -77,8 +77,9 @@
         v-for="child in children"
         :key="child.id"
         :node="child"
-        :selected="selectedFile?.id === child.id"
+        :selected="isChildSelected(child.id)"
         :selected-file="selectedFile"
+        :selected-file-ids="selectedFileIds"
         :renaming-id="renamingId"
         @select="$emit('select', $event)"
         @expand="$emit('expand', $event)"
@@ -117,6 +118,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  selectedFileIds: {
+    type: Object,
+    default: null
+  },
   renamingId: {
     type: String,
     default: null
@@ -137,6 +142,13 @@ const renameInput = ref(null)
 
 const fileIcon = computed(() => getFileIcon(props.node.type, props.node.fileType))
 
+function isChildSelected(childId) {
+  if (props.selectedFileIds && props.selectedFileIds.has) {
+    return props.selectedFileIds.has(childId)
+  }
+  return props.selectedFile?.id === childId
+}
+
 watch(() => props.node.children, (newChildren) => {
   if (newChildren && newChildren.length > 0) {
     children.value = newChildren
@@ -149,13 +161,27 @@ watch(() => props.renamingId, (newId) => {
   }
 })
 
-function handleSelect() {
-  emit('select', props.node)
+function handleSelect(e) {
+  emit('select', {
+    file: props.node,
+    event: {
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey
+    }
+  })
 }
 
 function handleContextMenu(e) {
   e.preventDefault()
-  emit('select', props.node)
+  emit('select', {
+    file: props.node,
+    event: {
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false
+    }
+  })
   emit('context-menu', {
     event: e,
     file: props.node,

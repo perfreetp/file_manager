@@ -1,8 +1,30 @@
 <template>
   <div class="file-tree">
     <div class="tree-header">
-      <h3>文件目录</h3>
+      <div class="header-left">
+        <label class="select-all-label">
+          <input 
+            type="checkbox" 
+            class="select-all-checkbox"
+            :checked="isAllSelected"
+            :indeterminate="isIndeterminate"
+            @change="toggleSelectAll"
+          />
+          <span v-if="hasSelection" class="selection-count">
+            ({{ selectedCount }})
+          </span>
+        </label>
+        <h3>文件目录</h3>
+      </div>
       <div class="header-actions">
+        <button 
+          v-if="hasSelection"
+          class="action-btn action-delete-selected"
+          @click="handleBatchDelete"
+          title="删除选中项"
+        >
+          🗑️ 删除
+        </button>
         <button 
           class="action-btn"
           @click="handleCreateFolder"
@@ -48,8 +70,9 @@
         v-for="file in files"
         :key="file.id"
         :node="file"
-        :selected="selectedFile?.id === file.id"
+        :selected="selectedFileIds.has(file.id)"
         :selected-file="selectedFile"
+        :selected-file-ids="selectedFileIds"
         :renaming-id="renamingFileId"
         @select="handleSelect"
         @expand="handleExpand"
@@ -111,10 +134,32 @@
     >
       <div class="dialog-content">
         <h4>确认删除</h4>
-        <p>确定要删除 <strong>{{ fileToDelete?.name }}</strong> 吗？</p>
-        <p v-if="fileToDelete?.type === 'folder'" class="warning-text">
-          ⚠️ 删除文件夹将同时删除其中的所有文件
-        </p>
+        <div v-if="filesToDelete.length === 1">
+          <p>确定要删除 <strong>{{ filesToDelete[0]?.name }}</strong> 吗？</p>
+          <p v-if="filesToDelete[0]?.type === 'folder'" class="warning-text">
+            ⚠️ 删除文件夹将同时删除其中的所有文件
+          </p>
+        </div>
+        <div v-else class="batch-delete-info">
+          <p>确定要删除选中的 <strong>{{ filesToDelete.length }}</strong> 个文件/文件夹吗？</p>
+          <div class="delete-list">
+            <div 
+              v-for="file in displayDeleteList" 
+              :key="file.id" 
+              class="delete-item"
+            >
+              <span class="delete-icon">{{ file.type === 'folder' ? '📁' : getFileTypeIcon(file) }}</span>
+              <span class="delete-name">{{ file.name }}</span>
+              <span v-if="file.type === 'folder'" class="delete-folder-hint">(文件夹)</span>
+            </div>
+            <div v-if="hasMoreFilesToDelete" class="more-files-hint">
+              ... 还有 {{ filesToDelete.length - displayDeleteList.length }} 个文件
+            </div>
+          </div>
+          <p v-if="hasFoldersToDelete" class="warning-text">
+            ⚠️ 删除文件夹将同时删除其中的所有内容
+          </p>
+        </div>
         <div class="dialog-actions">
           <button class="btn btn-cancel" @click="cancelDelete">取消</button>
           <button class="btn btn-danger" @click="confirmDelete">删除</button>
@@ -134,13 +179,15 @@ const emit = defineEmits(['select', 'preview', 'files-changed'])
 
 const files = ref([])
 const selectedFile = ref(null)
+const selectedFileIds = ref(new Set())
+const lastSelectedFile = ref(null)
 const loading = ref(false)
 const fileInput = ref(null)
 const pendingUploadParentId = ref(null)
 const showCreateFolder = ref(false)
 const newFolderName = ref('')
 const showDeleteConfirm = ref(false)
-const fileToDelete = ref(null)
+const filesToDelete = ref([])
 const isDragging = ref(false)
 const isRootDragOver = ref(false)
 const draggedItem = ref(null)
@@ -185,6 +232,120 @@ const contextMenuItems = computed(() => {
   return items
 })
 
+const selectedCount = computed(() => selectedFileIds.value.size)
+
+const hasSelection = computed(() => selectedFileIds.value.size > 0)
+
+const selectedFoldersCount = computed(() => {
+  let count = 0
+  selectedFileIds.value.forEach(id => {
+    const file = findFileByIdInAll(id)
+    if (file && file.type === 'folder') {
+      count++
+    }
+  })
+  return count
+})
+
+function getAllVisibleFiles(filesList) {
+  const result = []
+  function traverse(list) {
+    for (const file of list) {
+      result.push(file)
+      if (file.type === 'folder' && file.loaded && file.children && file.children.length > 0) {
+        traverse(file.children)
+      }
+    }
+  }
+  traverse(filesList)
+  return result
+}
+
+const allVisibleFiles = computed(() => getAllVisibleFiles(files.value))
+
+const isAllSelected = computed(() => {
+  const visible = allVisibleFiles.value
+  if (visible.length === 0) return false
+  return visible.every(file => selectedFileIds.value.has(file.id))
+})
+
+const isIndeterminate = computed(() => {
+  const visible = allVisibleFiles.value
+  if (visible.length === 0) return false
+  const selectedCount = visible.filter(file => selectedFileIds.value.has(file.id)).length
+  return selectedCount > 0 && selectedCount < visible.length
+})
+
+const displayDeleteList = computed(() => {
+  return filesToDelete.value.slice(0, 10)
+})
+
+const hasMoreFilesToDelete = computed(() => {
+  return filesToDelete.value.length > 10
+})
+
+const hasFoldersToDelete = computed(() => {
+  return filesToDelete.value.some(f => f.type === 'folder')
+})
+
+function findFileByIdInAll(id) {
+  const findInList = (list) => {
+    for (const file of list) {
+      if (file.id === id) return file
+      if (file.children && file.children.length > 0) {
+        const found = findInList(file.children)
+        if (found) return found
+      }
+    }
+    return null
+  }
+  return findInList(files.value)
+}
+
+function getFileTypeIcon(file) {
+  if (file.type === 'folder') return '📁'
+  if (!file.fileType) return '📄'
+  switch (file.fileType) {
+    case 'image': return '🖼️'
+    case 'document': return '📄'
+    case 'pdf': return '📕'
+    case 'video': return '🎬'
+    case 'audio': return '🎵'
+    default: return '📄'
+  }
+}
+
+function toggleSelectAll(e) {
+  const visible = allVisibleFiles.value
+  if (isAllSelected.value) {
+    selectedFileIds.value.clear()
+    selectedFile.value = null
+    lastSelectedFile.value = null
+  } else {
+    selectedFileIds.value.clear()
+    visible.forEach(file => selectedFileIds.value.add(file.id))
+    if (visible.length > 0) {
+      selectedFile.value = visible[visible.length - 1]
+      lastSelectedFile.value = visible[visible.length - 1]
+    }
+  }
+}
+
+function handleBatchDelete() {
+  const filesList = []
+  selectedFileIds.value.forEach(id => {
+    const file = findFileByIdInAll(id)
+    if (file) {
+      filesList.push(file)
+    }
+  })
+  
+  if (filesList.length === 0) return
+  
+  filesToDelete.value = filesList
+  showDeleteConfirm.value = true
+}
+
 async function loadFiles() {
   loading.value = true
   try {
@@ -201,8 +362,41 @@ onMounted(() => {
   loadFiles()
 })
 
-function handleSelect(file) {
-  selectedFile.value = file
+function handleSelect({ file, event }) {
+  const isCtrlOrCmd = event.ctrlKey || event.metaKey
+  const isShift = event.shiftKey
+  
+  if (isCtrlOrCmd) {
+    if (selectedFileIds.value.has(file.id)) {
+      selectedFileIds.value.delete(file.id)
+      if (selectedFile.value?.id === file.id) {
+        selectedFile.value = null
+      }
+    } else {
+      selectedFileIds.value.add(file.id)
+      selectedFile.value = file
+    }
+    lastSelectedFile.value = file
+  } else if (isShift && lastSelectedFile.value) {
+    const lastIndex = allVisibleFiles.value.findIndex(f => f.id === lastSelectedFile.value?.id)
+    const currentIndex = allVisibleFiles.value.findIndex(f => f.id === file.id)
+    
+    if (lastIndex !== -1 && currentIndex !== -1) {
+      const start = Math.min(lastIndex, currentIndex)
+      const end = Math.max(lastIndex, currentIndex)
+      
+      for (let i = start; i <= end; i++) {
+        selectedFileIds.value.add(allVisibleFiles.value[i].id)
+      }
+      selectedFile.value = file
+    }
+  } else {
+    selectedFileIds.value.clear()
+    selectedFileIds.value.add(file.id)
+    selectedFile.value = file
+    lastSelectedFile.value = file
+  }
+  
   emit('select', file)
 }
 
@@ -219,28 +413,42 @@ async function handleRename({ id, name }) {
 }
 
 function handleDelete(file) {
-  fileToDelete.value = file
+  filesToDelete.value = [file]
   showDeleteConfirm.value = true
 }
 
 async function confirmDelete() {
-  if (!fileToDelete.value) return
+  if (filesToDelete.value.length === 0) return
   
-  const result = await deleteFile(fileToDelete.value.id)
-  if (result.success) {
-    if (selectedFile.value?.id === fileToDelete.value.id) {
-      selectedFile.value = null
+  const deletedIds = new Set()
+  
+  for (const file of filesToDelete.value) {
+    if (deletedIds.has(file.id)) continue
+    
+    const result = await deleteFile(file.id)
+    if (result.success) {
+      deletedIds.add(file.id)
+      selectedFileIds.value.delete(file.id)
+      
+      if (selectedFile.value?.id === file.id) {
+        selectedFile.value = null
+      }
     }
-    showDeleteConfirm.value = false
-    fileToDelete.value = null
-    emit('files-changed')
-    await loadFiles()
   }
+  
+  if (selectedFileIds.value.size === 0) {
+    lastSelectedFile.value = null
+  }
+  
+  showDeleteConfirm.value = false
+  filesToDelete.value = []
+  emit('files-changed')
+  await loadFiles()
 }
 
 function cancelDelete() {
   showDeleteConfirm.value = false
-  fileToDelete.value = null
+  filesToDelete.value = []
 }
 
 function handleUpload(data) {
@@ -481,6 +689,32 @@ defineExpose({
   background-color: #fafafa;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.select-all-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.selection-count {
+  font-size: 12px;
+  color: var(--primary-color);
+  font-weight: 500;
+}
+
 .tree-header h3 {
   margin: 0;
   font-size: 14px;
@@ -511,6 +745,18 @@ defineExpose({
 .action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-delete-selected {
+  background-color: #fff1f0;
+  border-color: var(--danger-color);
+  color: var(--danger-color);
+}
+
+.action-delete-selected:hover {
+  background-color: var(--danger-color);
+  border-color: var(--danger-color);
+  color: white;
 }
 
 .tree-content {
@@ -602,6 +848,53 @@ defineExpose({
 
 .folder-name-input:focus {
   border-color: var(--primary-color);
+}
+
+.batch-delete-info {
+  margin-bottom: 16px;
+}
+
+.delete-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 12px 0;
+  padding: 8px;
+  background-color: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.delete-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.delete-icon {
+  margin-right: 6px;
+  font-size: 14px;
+}
+
+.delete-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-folder-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+
+.more-files-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+  text-align: center;
+  font-style: italic;
 }
 
 .dialog-actions {
