@@ -79,9 +79,11 @@
         :node="child"
         :selected="selectedFile?.id === child.id"
         :selected-file="selectedFile"
+        :renaming-id="renamingId"
         @select="$emit('select', $event)"
         @expand="$emit('expand', $event)"
         @rename="$emit('rename', $event)"
+        @rename-done="$emit('rename-done')"
         @delete="$emit('delete', $event)"
         @upload="$emit('upload', { parentId: child.id, event: $event })"
         @move="$emit('move', $event)"
@@ -114,10 +116,14 @@ const props = defineProps({
   selectedFile: {
     type: Object,
     default: null
+  },
+  renamingId: {
+    type: String,
+    default: null
   }
 })
 
-const emit = defineEmits(['select', 'expand', 'rename', 'delete', 'upload', 'drag-start', 'drag-end', 'move', 'context-menu'])
+const emit = defineEmits(['select', 'expand', 'rename', 'rename-done', 'delete', 'upload', 'drag-start', 'drag-end', 'move', 'context-menu'])
 
 const expanded = ref(false)
 const loading = ref(false)
@@ -136,6 +142,12 @@ watch(() => props.node.children, (newChildren) => {
     children.value = newChildren
   }
 }, { immediate: true })
+
+watch(() => props.renamingId, (newId) => {
+  if (newId === props.node.id) {
+    handleRename()
+  }
+})
 
 function handleSelect() {
   emit('select', props.node)
@@ -189,10 +201,12 @@ function finishRename() {
     emit('rename', { id: props.node.id, name: newName.value.trim() })
   }
   isRenaming.value = false
+  emit('rename-done')
 }
 
 function cancelRename() {
   isRenaming.value = false
+  emit('rename-done')
 }
 
 function handleDelete() {

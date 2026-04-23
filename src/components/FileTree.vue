@@ -50,9 +50,11 @@
         :node="file"
         :selected="selectedFile?.id === file.id"
         :selected-file="selectedFile"
+        :renaming-id="renamingFileId"
         @select="handleSelect"
         @expand="handleExpand"
         @rename="handleRename"
+        @rename-done="handleRenameDone"
         @delete="handleDelete"
         @upload="handleUpload"
         @move="handleMove"
@@ -146,6 +148,7 @@ const draggedItem = ref(null)
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const contextMenuFile = ref(null)
+const renamingFileId = ref(null)
 
 const contextMenuItems = computed(() => {
   if (!contextMenuFile.value) return []
@@ -423,7 +426,7 @@ function handleContextMenuAction(action) {
   switch (action) {
     case 'rename':
       selectedFile.value = contextMenuFile.value
-      handleRename({ id: contextMenuFile.value.id, name: contextMenuFile.value.name })
+      renamingFileId.value = contextMenuFile.value.id
       break
     case 'delete':
       selectedFile.value = contextMenuFile.value
@@ -444,6 +447,10 @@ function handleContextMenuAction(action) {
   }
   
   closeContextMenu()
+}
+
+function handleRenameDone() {
+  renamingFileId.value = null
 }
 
 function expandToFile(fileId) {
